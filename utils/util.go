@@ -34,3 +34,10 @@ func AssertStringResult(t *testing.T, want, get string) {
 		t.Errorf("want get %v, actual get %v\n", want, get)
 	}
 }
+
+func AssertFalse(t *testing.T, v bool) {
+	t.Helper()
+	if v == true {
+		t.Error("assert false but get a true value")
+	}
+}
