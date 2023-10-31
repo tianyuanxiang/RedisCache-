@@ -1,11 +1,13 @@
 package main
 
 import (
+	"fmt"
 	"github.com/go-redis/redis/v7"
 	"redisCache/Chapter03/model"
 	"redisCache/redisConn"
 	"redisCache/utils"
 	"testing"
+	"time"
 )
 
 func TestLoginCookies(t *testing.T) {
@@ -215,5 +217,151 @@ func TestLoginCookies(t *testing.T) {
 
 		h8 := Client.Conn.ZRange("zset-key", 0, -1)
 		t.Log("the hash is: ", h8)
+	})
+
+	// 有序集合-范围型
+	t.Run("ZSets-Range", func(t *testing.T) {
+		z1 := Client.Conn.ZAdd("zset-1",
+			&redis.Z{Member: "a", Score: 1},
+			&redis.Z{Member: "b", Score: 2},
+			&redis.Z{Member: "c", Score: 3},
+		)
+		t.Log("the hash is: ", z1)
+
+		z2 := Client.Conn.ZAdd("zset-2",
+			&redis.Z{Member: "b", Score: 4},
+			&redis.Z{Member: "c", Score: 1},
+			&redis.Z{Member: "d", Score: 0},
+		)
+		t.Log("the hash is: ", z2)
+		// 类似于集合的交集运算
+		z3 := Client.Conn.ZInterStore("zset-i", &redis.ZStore{Keys: []string{"zset-1", "zset-2"}})
+		t.Log("the hash is: ", z3)
+
+		z4 := Client.Conn.ZRange("zset-i", 0, -1)
+		t.Log("the hash is: ", z4)
+
+		// 并集运算
+		z5 := Client.Conn.ZUnionStore("zset-u", &redis.ZStore{Keys: []string{"zset-1", "zset-2"}})
+		t.Log("the hash is: ", z5)
+
+		z6 := Client.Conn.ZRange("zset-u", 0, -1)
+		t.Log("the hash is: ", z6)
+
+		// 可以把集合作为输入传给ZINTERSTORE和ZUNIONSTORE，命令会将集合看作是成团分值全为1的有序集合来处理
+		z7 := Client.Conn.SAdd("set-1", "a", "d")
+		t.Log("the hash is: ", z7)
+
+		z8 := Client.Conn.ZUnionStore("zset-u2", &redis.ZStore{
+			Keys: []string{"zset-1", "zset-2", "set-1"},
+		})
+		t.Log("the hash is: ", z8)
+
+		z9 := Client.Conn.ZRange("zset-u2", 0, -1)
+		t.Log("the hash is: ", z9)
+	})
+
+	// 发布与订阅
+	t.Run("Publish and subscribe", func(t *testing.T) {
+		go Client.RunPubsub1()
+		go Client.RunPubsub2()
+		Client.Publisher(6)
+		time.Sleep(1 * time.Second)
+		defer Client.Reset()
+	})
+
+	// stream练习--生产消息
+	t.Run("Stream Test", func(t *testing.T) {
+		s1 := Client.Conn.XAdd(&redis.XAddArgs{
+			Stream: "my_streams_topic",
+			MaxLen: 500,
+			Values: map[string]interface{}{
+				"location_id":          222,
+				"detection":            "{\"det_prob\":0.857006907463074,\"x\":987,\"y\":673,\"w\":73,\"h\":87}",
+				"feature_b64":          "IzGSsLeXj6y1qhotLKuTLrascZU3r6mrbqw/IpesJ623MNAmvi/IpSuoq7FisA6uyy9zMXMpEqpBqC2wFKVEsFgrIrBho5YtOqxDK1AwmCNQnv4bVSi2oCqriKlgqt+psqumKkQq363+p7QkLikQrB0coSq7odUnyi2NKHwutqi7LV2tEKjiLOCqoaB8sH+tHa0eIkuwzS9YLWAlfbAfrnCpOS2/qPYkyyAcK70iXKbKME0yHC6vpt6wHq44pQeqW7I6LUOplK5JqIOgjCmWMJYyBK/8qmCySC7wKRUt+q22KJYkeiQCs2EocDAqIp2eoTDVsPerNyQAl2EjSSziLw==",
+				"image_url":            "http://192.168.7.222:9081/153,030cd1d23b8dd1.jpg",
+				"image_url2":           "",
+				"fit":                  222,
+				"source_id":            222,
+				"parent_info_id":       "00000000-0000-0000-0000-000000000000",
+				"similarity_threshold": 0.54435,
+				"video_url":            "rtsp://admin:yisa123456@192.168.7.211",
+				"quality_int":          44862,
+				"rgb_liveness":         2,
+				"info_id":              "6530f424-4873-bea5-69f2-f1e368657c07",
+				"mask_id":              0,
+				"mask_id_prob":         100,
+			},
+		})
+		t.Log("the hash is: ", s1)
+	})
+	// stream练习--消费消息
+	t.Run("Stream Test", func(t *testing.T) {
+		datas := make([]map[string]interface{}, 0)
+		s2 := Client.Conn.XRead(&redis.XReadArgs{
+			Streams: []string{"my_streams_topic", "0"},
+			// 要获取的消息数量
+			Count: 0,
+			Block: time.Second * 5,
+		})
+		if len(s2.Val()) == 0 {
+			// 处理错误
+			panic(s2)
+		}
+		// 处理读取到的消息
+		for _, message := range s2.Val() {
+			// 处理每个流的消息
+			// streamName := message.Stream
+			for _, xMessage := range message.Messages {
+				// 处理每条消息
+				messageID := xMessage.ID
+				messageData := xMessage.Values
+				temp := map[string]interface{}{
+					"messageID": messageID,
+					"send_time": messageData["send_time"],
+					"fit":       messageData["fit"],
+				}
+				datas = append(datas, temp)
+				// 在这里处理消息的数据
+				fmt.Println(messageID)
+				fmt.Println(messageData)
+			}
+		}
+		fmt.Println(datas)
+		t.Log("the hash is: ", s2)
+	})
+
+	// stream练习--创建消费者组
+	t.Run("Stream Group Test", func(t *testing.T) {
+		// start：指定消费者组从 Stream 的哪个位置开始消费消息。这通常是一个消息的 ID。0表示从Stream开始的位置
+		s3 := Client.Conn.XGroupCreate("my_streams_topic", "my_group1", "0")
+		if s3.Err() != nil {
+			// 处理错误
+			panic(s3)
+		}
+	})
+
+	// stream练习--基于消费者组消费消息
+	t.Run("Stream Group Consumer Test", func(t *testing.T) {
+		for {
+			s4 := Client.Conn.XReadGroup(&redis.XReadGroupArgs{
+				Group:    "my_group1",
+				Consumer: "my_consumer1",
+				Streams:  []string{"my_streams_topic", "0"},
+				Count:    1,
+				Block:    0,
+				// 表示是否要在接收消息后发送确认（ACK）给 Redis，这里设置为 false，表示消费者会发送 ACK。
+				NoAck: false,
+			})
+			fmt.Println(s4.Val())
+
+			// 发送 ACK,之后从streams中移除该消息
+			ackIDs := make([]string, len(s4.Val()))
+			for i, stream := range s4.Val() {
+				ackIDs[i] = stream.Messages[0].ID
+			}
+			Client.Conn.XAck("my_streams_topic", "my_group1", ackIDs...)
+		}
+
 	})
 }
